@@ -60,15 +60,15 @@ export const MarkAttendance: React.FC = () => {
   // Initialize attendance state when subject/session changes
   useEffect(() => {
     const newMap: Record<string, AttendanceStatus> = {};
+    const effectiveSessionId =
+      currentSession?.id || selectedSessionId || `session-${activeSubjectId}-${selectedDate}`;
 
-    if (currentSession) {
-      // Load existing records if session exists
-      const existing = attendanceRecords.filter((r) => r.classId === currentSession.id);
-      if (existing.length > 0) {
-        existing.forEach((r) => {
-          newMap[r.studentId] = r.status;
-        });
-      }
+    // Load existing records if session exists
+    const existing = attendanceRecords.filter((r) => r.classId === effectiveSessionId);
+    if (existing.length > 0) {
+      existing.forEach((r) => {
+        newMap[r.studentId] = r.status;
+      });
     }
 
     // Default any unset student to 'present' (speed principle: default present, mark absentees)
@@ -79,7 +79,7 @@ export const MarkAttendance: React.FC = () => {
     });
 
     setAttendanceMap(newMap);
-  }, [currentSession, activeSubjectId, enrolledStudents, attendanceRecords]);
+  }, [currentSession, selectedSessionId, activeSubjectId, enrolledStudents, attendanceRecords, selectedDate]);
 
   // Filtered student list for search
   const filteredStudents = useMemo(() => {
@@ -116,19 +116,20 @@ export const MarkAttendance: React.FC = () => {
 
   // Save Attendance
   const handleSave = () => {
-    let targetSessionId = currentSession?.id;
-
-    if (!targetSessionId) {
-      // Session does not exist yet for this date, create on the fly
-      targetSessionId = `session-${activeSubjectId}-${selectedDate}`;
-    }
+    const targetSessionId =
+      currentSession?.id || `session-${activeSubjectId}-${selectedDate}`;
 
     const recordsToSave = enrolledStudents.map((st) => ({
       studentId: st.id,
       status: attendanceMap[st.id] || 'present'
     }));
 
-    markSessionAttendance(targetSessionId, recordsToSave);
+    markSessionAttendance(targetSessionId, recordsToSave, {
+      subjectId: activeSubjectId,
+      date: selectedDate,
+      startTime: activeSubject?.scheduleTime || '10:00 AM',
+      room: activeSubject?.room
+    });
 
     // Trigger celebratory micro-confetti
     try {

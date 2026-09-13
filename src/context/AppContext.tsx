@@ -57,7 +57,14 @@ interface AppContextType {
   quickMarkSession: (sessionId: string) => void;
   markSessionAttendance: (
     sessionId: string,
-    records: { studentId: string; status: AttendanceStatus }[]
+    records: { studentId: string; status: AttendanceStatus }[],
+    sessionMeta?: {
+      subjectId?: string;
+      date?: string;
+      startTime?: string;
+      room?: string;
+      topic?: string;
+    }
   ) => void;
   updateSingleAttendance: (
     sessionId: string,
@@ -272,11 +279,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           fetchSupabaseData().then((remoteData) => {
             if (remoteData && remoteData.subjects.length > 0) {
               setSubjects(remoteData.subjects);
-              setStudents(remoteData.students);
-              setSessions(remoteData.sessions);
-              setAttendanceRecords(remoteData.attendanceRecords);
-              setAuditLogs(remoteData.auditLogs);
-              showToast('Synced active data from Supabase PostgreSQL!');
+              if (remoteData.students.length > 0) {
+                setStudents(remoteData.students);
+              }
+              if (remoteData.sessions.length > 0) {
+                setSessions(remoteData.sessions);
+              }
+              if (remoteData.attendanceRecords.length > 0) {
+                setAttendanceRecords(remoteData.attendanceRecords);
+              }
+              if (remoteData.auditLogs.length > 0) {
+                setAuditLogs(remoteData.auditLogs);
+              }
+              showToast('Connected to Supabase PostgreSQL!');
             }
           });
         }
@@ -369,7 +384,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Mark Session Attendance (<30s UX)
   const markSessionAttendance = (
     sessionId: string,
-    recordsToSave: { studentId: string; status: AttendanceStatus }[]
+    recordsToSave: { studentId: string; status: AttendanceStatus }[],
+    sessionMeta?: {
+      subjectId?: string;
+      date?: string;
+      startTime?: string;
+      room?: string;
+      topic?: string;
+    }
   ) => {
     const now = new Date().toISOString();
     
@@ -386,17 +408,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setAttendanceRecords([...existingFiltered, ...newRecords]);
 
-    // Mark session as completed/isMarked
-    setSessions((prev) =>
-      prev.map((s) => (s.id === sessionId ? { ...s, isMarked: true } : s))
-    );
+    // Mark session as completed / ensure session exists in sessions list
+    setSessions((prev) => {
+      const exists = prev.some((s) => s.id === sessionId);
+      if (exists) {
+        return prev.map((s) => (s.id === sessionId ? { ...s, isMarked: true } : s));
+      }
+      const matchedSubject = subjects.find(
+        (sub) => sessionMeta?.subjectId === sub.id || sessionId.includes(sub.id)
+      ) || subjects[0];
+
+      const newSession: ClassSession = {
+        id: sessionId,
+        subjectId: sessionMeta?.subjectId || matchedSubject?.id || '',
+        teacherId: matchedSubject?.teacherId || currentUser.id,
+        date: sessionMeta?.date || new Date().toISOString().split('T')[0],
+        startTime: sessionMeta?.startTime || matchedSubject?.scheduleTime || '10:00 AM',
+        room: sessionMeta?.room || matchedSubject?.room,
+        topic: sessionMeta?.topic || 'Lecture Session',
+        isMarked: true
+      };
+      return [newSession, ...prev];
+    });
 
     const presentCount = recordsToSave.filter((r) => r.status === 'present').length;
     const totalCount = recordsToSave.length;
     showToast(`Attendance saved: ${presentCount}/${totalCount} students marked Present.`);
 
     if (isSupabaseConn) {
-      saveAttendanceToSupabase(sessionId, recordsToSave);
+      saveAttendanceToSupabase(sessionId, recordsToSave, sessionMeta);
     }
   };
 

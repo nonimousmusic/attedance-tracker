@@ -117,12 +117,56 @@ export async function fetchSupabaseData(): Promise<{
 
 export async function saveAttendanceToSupabase(
   classId: string,
-  records: { studentId: string; status: AttendanceStatus }[]
+  records: { studentId: string; status: AttendanceStatus }[],
+  sessionInfo?: {
+    subjectId?: string;
+    teacherId?: string;
+    date?: string;
+    startTime?: string;
+    room?: string;
+    topic?: string;
+  }
 ): Promise<boolean> {
   const client = getSupabaseClient();
   if (!client) return false;
 
   try {
+    // 1. Ensure the class session exists in Supabase 'classes' table
+    const subId = sessionInfo?.subjectId || classId.split('-')[1] || 'sub-cs301';
+    const dateVal =
+      sessionInfo?.date ||
+      classId.split('-').slice(2).join('-') ||
+      new Date().toISOString().split('T')[0];
+
+    await client.from('classes').upsert(
+      {
+        id: classId,
+        subject_id: subId,
+        teacher_id: sessionInfo?.teacherId || 'user-teacher-1',
+        date: dateVal,
+        start_time: sessionInfo?.startTime || '10:00 AM',
+        room: sessionInfo?.room || 'Hall 302',
+        topic: sessionInfo?.topic || 'Lecture Session',
+        is_marked: true
+      },
+      { onConflict: 'id' }
+    );
+
+    // 2. Ensure all students in records exist in Supabase 'students' table
+    const studentUpserts = records.map((r) => ({
+      id: r.studentId,
+      roll_number: r.studentId.replace('student-', ''),
+      name: `Student ${r.studentId.replace('student-', '')}`,
+      email: `student.${r.studentId.replace('student-', '')}@college.edu`,
+      class: 'B.Tech CSE',
+      section: 'CSE-A',
+      semester: '5th Sem'
+    }));
+    await client
+      .from('students')
+      .upsert(studentUpserts, { onConflict: 'id', ignoreDuplicates: true });
+
+    // 3. Upsert attendance records
     const payload = records.map((r) => ({
       class_id: classId,
       student_id: r.studentId,
@@ -130,18 +174,14 @@ export async function saveAttendanceToSupabase(
       marked_at: new Date().toISOString()
     }));
 
-    // Upsert attendance
     const { error: attError } = await client
       .from('attendance')
       .upsert(payload, { onConflict: 'class_id,student_id' });
 
-    if (attError) throw attError;
-
-    // Update class is_marked
-    await client
-      .from('classes')
-      .update({ is_marked: true })
-      .eq('id', classId);
+    if (attError) {
+      console.error('Attendance upsert error in Supabase:', attError);
+      throw attError;
+    }
 
     return true;
   } catch (err) {
@@ -155,6 +195,19 @@ export async function recordAuditLogToSupabase(log: AuditLog): Promise<boolean> 
   if (!client) return false;
 
   try {
+    // Ensure class exists in classes table
+    await client.from('classes').upsert(
+      {
+        id: log.classId,
+        subject_id: log.classId.split('-')[1] || 'sub-cs301',
+        teacher_id: 'user-teacher-1',
+        date: log.date,
+        start_time: '10:00 AM',
+        is_marked: true
+      },
+      { onConflict: 'id' }
+    );
+
     const { error } = await client.from('audit_logs').insert({
       id: log.id,
       class_id: log.classId,
